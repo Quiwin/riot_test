@@ -1,12 +1,9 @@
 import base64
-from hashlib import sha256
-import hmac
 import json
-from typing import Annotated, Any, Dict, List, Union
+from typing import Annotated, Any
 from functools import singledispatch
 
-from fastapi import Body, FastAPI, HTTPException, Response
-from pydantic import BaseModel
+from fastapi import Body, FastAPI, HTTPException
 
 from app.crypt import CryptBase64, InvalidException
 
@@ -14,19 +11,21 @@ app = FastAPI()
 
 crypt = CryptBase64
 
-hmac_key = "random_key".encode("utf-8")
+
+def _internal_encrypt(value: Any):
+    return crypt.encrypt(json.dumps(value).encode("utf-8"))
 
 
 @singledispatch
 def _encrypt(payload) -> Any:
-    return crypt.encrypt(json.dumps(payload).encode("utf-8"))
+    return _internal_encrypt(payload)
 
 
 @_encrypt.register
 def _(payload: list) -> Any:
     res = []
     for value in payload:
-        res += crypt.encrypt(json.dumps(value).encode("utf-8"))
+        res += _internal_encrypt(value)
     return res
 
 
@@ -34,7 +33,7 @@ def _(payload: list) -> Any:
 def _(payload: dict) -> Any:
     res = {}
     for key, value in payload.items():
-        res[key] = crypt.encrypt(json.dumps(value).encode("utf-8"))
+        res[key] = _internal_encrypt(value)
     return res
 
 
@@ -79,20 +78,15 @@ def decrypt(payload: Any = Body(None)):
     return _decrypt(payload)
 
 
-def _sign(payload: bytes):
-    return base64.b64encode(hmac.digest(key=hmac_key, msg=payload, digest=sha256))
-
-
 @app.post("/sign")
 def sign(payload: Any = Body(None)):
-    res = _sign(json.dumps(payload).encode("utf-8"))
-    return res
+    return CryptBase64.sign(json.dumps(payload).encode("utf-8"))
 
 
 @app.post("/verify")
 def verify(signature: Annotated[str, Body()], data: Annotated[Any, Body()]):
     msg = json.dumps(decrypt(data))
-    digest = _sign(msg.encode("utf-8"))
-    if hmac.compare_digest(digest, signature.encode("utf-8")):
+    digest = CryptBase64.sign(msg.encode("utf-8"))
+    if CryptBase64.compare(digest, signature.encode("utf-8")):
         return
     raise HTTPException(status_code=400)
